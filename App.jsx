@@ -420,12 +420,79 @@ const tracks = {
 
 const trackOrder = ["conversation", "confidence", "presence", "father", "husband"];
 
+
+// ── localStorage helpers ──────────────────────────────────────────────────────
+const STORAGE_KEY = "riseguide_v1";
+
+const defaultState = {
+  active: "conversation",
+  lessonIdx: { conversation: 0, confidence: 0, presence: 0, father: 0, husband: 0 },
+  stage: { conversation: "intro", confidence: "intro", presence: "intro", father: "intro", husband: "intro" },
+  quizAnswer: { conversation: null, confidence: null, presence: null, father: null, husband: null },
+  streak: 0,
+  lastActiveDate: null,
+  totalCompleted: 0,
+};
+
+function loadState() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return defaultState;
+    return { ...defaultState, ...JSON.parse(saved) };
+  } catch { return defaultState; }
+}
+
+function saveState(patch) {
+  try {
+    const current = loadState();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...current, ...patch }));
+  } catch {}
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function calcStreak(lastDate, currentStreak) {
+  const today = todayStr();
+  if (lastDate === today) return currentStreak;
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yStr = yesterday.toISOString().slice(0, 10);
+  if (lastDate === yStr) return currentStreak + 1;
+  return 1;
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [active, setActive] = useState("conversation");
-  const [lessonIdx, setLessonIdx] = useState({ conversation: 0, confidence: 0, presence: 0, father: 0, husband: 0 });
-  const [stage, setStage] = useState({ conversation: "intro", confidence: "intro", presence: "intro", father: "intro", husband: "intro" });
-  const [quizAnswer, setQuizAnswer] = useState({ conversation: null, confidence: null, presence: null, father: null, husband: null });
-  const [started, setStarted] = useState(new Set());
+  const init = loadState();
+
+  const [active, setActiveRaw] = useState(init.active);
+  const [lessonIdx, setLessonIdxRaw] = useState(init.lessonIdx);
+  const [stage, setStageRaw] = useState(init.stage);
+  const [quizAnswer, setQuizAnswerRaw] = useState(init.quizAnswer);
+  const [streak, setStreak] = useState(init.streak);
+  const [totalCompleted, setTotalCompleted] = useState(init.totalCompleted || 0);
+
+  function setActive(val) { setActiveRaw(val); saveState({ active: val }); }
+  function setLessonIdx(fn) {
+    setLessonIdxRaw(prev => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      saveState({ lessonIdx: next }); return next;
+    });
+  }
+  function setStage(fn) {
+    setStageRaw(prev => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      saveState({ stage: next }); return next;
+    });
+  }
+  function setQuizAnswer(fn) {
+    setQuizAnswerRaw(prev => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      saveState({ quizAnswer: next }); return next;
+    });
+  }
 
   const track = tracks[active];
   const idx = lessonIdx[active];
@@ -435,16 +502,21 @@ export default function App() {
   const c = track.color;
   const isLast = idx === track.lessons.length - 1;
 
-  function start() {
-    setStage(s => ({ ...s, [active]: "lesson" }));
-    setStarted(d => new Set([...d, active]));
-  }
+  function start() { setStage(s => ({ ...s, [active]: "lesson" })); }
   function goQuiz() { setStage(s => ({ ...s, [active]: "quiz" })); }
+
   function answer(i) {
     if (answered !== null) return;
     setQuizAnswer(q => ({ ...q, [active]: i }));
     setStage(s => ({ ...s, [active]: "done" }));
+    const saved = loadState();
+    const newStreak = calcStreak(saved.lastActiveDate, saved.streak);
+    const newTotal = (saved.totalCompleted || 0) + 1;
+    setStreak(newStreak);
+    setTotalCompleted(newTotal);
+    saveState({ streak: newStreak, lastActiveDate: todayStr(), totalCompleted: newTotal });
   }
+
   function nextLesson() {
     setLessonIdx(p => ({ ...p, [active]: idx + 1 }));
     setStage(s => ({ ...s, [active]: "intro" }));
@@ -465,8 +537,8 @@ export default function App() {
             <div style={{ fontSize: 11, color: "#3a3a44", marginTop: 2 }}>3 minutes · Evidence-based · Built for you</div>
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 13, color: "#f5c842", fontWeight: 700 }}>🔥 Day 1</div>
-            <div style={{ fontSize: 11, color: "#3a3a44", marginTop: 2 }}>{completedLessons} of {totalLessons} lessons done</div>
+            <div style={{ fontSize: 13, color: "#f5c842", fontWeight: 700 }}>🔥 {streak} day streak</div>
+            <div style={{ fontSize: 11, color: "#3a3a44", marginTop: 2 }}>{totalCompleted} lessons completed</div>
           </div>
         </div>
 
@@ -484,7 +556,7 @@ export default function App() {
           {trackOrder.map(t => {
             const tr = tracks[t];
             const isActive = active === t;
-            const done = stage[t] === "done";
+            const isDone = stage[t] === "done";
             const li = lessonIdx[t];
             return (
               <button key={t} onClick={() => setActive(t)} style={{
@@ -496,7 +568,7 @@ export default function App() {
                 <div style={{ fontSize: 18, marginBottom: 5 }}>{tr.emoji}</div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: tr.color, lineHeight: 1.2 }}>{tr.shortLabel}</div>
                 <div style={{ fontSize: 11, color: "#3a3a44", marginTop: 3 }}>
-                  {done ? "✓ Done today" : `Lesson ${li + 1} of ${tr.lessons.length}`}
+                  {isDone ? "✓ Done today" : `Lesson ${li + 1} of ${tr.lessons.length}`}
                 </div>
               </button>
             );
@@ -515,7 +587,6 @@ export default function App() {
             {currentStage !== "intro" && <div style={{ fontSize: 11, color: "#2e2e3a", marginTop: 5, fontStyle: "italic" }}>{lesson.source}</div>}
           </div>
 
-          {/* INTRO STATE */}
           {currentStage === "intro" && (
             <>
               <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8, lineHeight: 1.3 }}>{lesson.title}</div>
@@ -529,30 +600,25 @@ export default function App() {
             </>
           )}
 
-          {/* LESSON / QUIZ / DONE STATES */}
           {currentStage !== "intro" && (
             <>
               <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 18, lineHeight: 1.35 }}>{lesson.title}</div>
 
-              {/* Evidence */}
               <div style={{ marginBottom: 18 }}>
                 <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: "#33333f", fontWeight: 600, marginBottom: 8 }}>The Evidence</div>
                 <div style={{ color: "#b0afb8", fontSize: 14, lineHeight: 1.8 }}>{lesson.core}</div>
               </div>
 
-              {/* Practice */}
               <div style={{ background: track.bg, border: `1px solid ${track.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
                 <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: c, fontWeight: 700, marginBottom: 8 }}>Today's Practice</div>
                 <div style={{ fontSize: 14, color: "#ddd", lineHeight: 1.75 }}>{lesson.practice}</div>
               </div>
 
-              {/* Also at home */}
               <div style={{ borderLeft: `2px solid #22222e`, paddingLeft: 14, marginBottom: 18 }}>
                 <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: "#33333f", fontWeight: 600, marginBottom: 6 }}>Also carries over to</div>
                 <div style={{ fontSize: 13, color: "#66666f", lineHeight: 1.7 }}>{lesson.forHome}</div>
               </div>
 
-              {/* Insight quote */}
               <div style={{ borderLeft: `3px solid ${c}`, background: "rgba(255,255,255,0.025)", borderRadius: "0 8px 8px 0", padding: "12px 16px", marginBottom: 20, fontSize: 14, fontStyle: "italic", color: "#ccc", lineHeight: 1.7 }}>
                 "{lesson.insight}"
               </div>
@@ -566,7 +632,7 @@ export default function App() {
           )}
         </div>
 
-        {/* QUIZ CARD */}
+        {/* Quiz */}
         {(currentStage === "quiz" || currentStage === "done") && (
           <div style={{ background: "#12121a", border: "1px solid #1c1c26", borderRadius: 16, padding: 24, marginBottom: 12 }}>
             <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 700, color: c, marginBottom: 14 }}>30-Second Check</div>
@@ -601,7 +667,7 @@ export default function App() {
           </div>
         )}
 
-        {/* NEXT */}
+        {/* Next */}
         {currentStage === "done" && (
           <div style={{ background: "#0c0c13", border: "1px dashed #1c1c26", borderRadius: 14, padding: "18px 22px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             {!isLast ? (
@@ -611,7 +677,7 @@ export default function App() {
                   <div style={{ fontWeight: 700, fontSize: 14, color: "#ddd" }}>{track.lessons[idx + 1].title}</div>
                 </div>
                 <button onClick={nextLesson} style={{ background: "transparent", border: `1.5px solid ${c}`, color: c, borderRadius: 100, padding: "9px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                  Unlock →
+                  Next →
                 </button>
               </>
             ) : (
