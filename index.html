@@ -76,27 +76,63 @@ const SK = 'dt_v5';
 function today() {
   return new Date().toISOString().slice(0, 10);
 }
+const DEFAULT_STATE = {
+  done: {},
+  starred: {},
+  reflections: {},
+  reviews: {},
+  streak: { current: 0, best: 0, lastActiveDate: null },
+  settings: { notificationsEnabled: false, notificationTime: '08:00' },
+  firstOpen: new Date().toISOString()
+};
+
+// One-time migration: recover progress saved under older storage keys
+// (the app's storage key changed across rebuilds as features were added)
+function migrateOldState() {
+  const oldKeys = ['dt_v4', 'dt_v3', 'dt_v2', 'dt_v1'];
+  for (const oldKey of oldKeys) {
+    try {
+      const raw = localStorage.getItem(oldKey);
+      if (!raw) continue;
+      const old = JSON.parse(raw);
+      if (!old || typeof old !== 'object') continue;
+
+      // Merge old data into a fresh default-shaped state.
+      // Old versions may have lacked fields the new app expects (reflections,
+      // reviews, streak) — fill those in safely.
+      const migrated = {
+        done: old.done || {},
+        starred: old.starred || {},
+        reflections: old.reflections || {},
+        reviews: old.reviews || {},
+        streak: old.streak || { current: 0, best: 0, lastActiveDate: null },
+        settings: old.settings || { notificationsEnabled: false, notificationTime: '08:00' },
+        firstOpen: old.firstOpen || new Date().toISOString(),
+        migratedFrom: oldKey
+      };
+
+      localStorage.setItem(SK, JSON.stringify(migrated));
+      console.log('Migrated progress from', oldKey, '→', SK);
+      return migrated;
+    } catch (e) {
+      console.warn('Migration check failed for', oldKey, e);
+    }
+  }
+  return null;
+}
+
 function loadState() {
   try {
     const r = localStorage.getItem(SK);
     if (r) return JSON.parse(r);
   } catch (e) {}
-  return {
-    done: {},
-    starred: {},
-    reflections: {},
-    reviews: {},
-    streak: {
-      current: 0,
-      best: 0,
-      lastActiveDate: null
-    },
-    settings: {
-      notificationsEnabled: false,
-      notificationTime: '08:00'
-    },
-    firstOpen: new Date().toISOString()
-  };
+
+  // Nothing under the current key — check for recoverable progress
+  // from a previous version of the app before falling back to fresh state.
+  const migrated = migrateOldState();
+  if (migrated) return migrated;
+
+  return DEFAULT_STATE;
 }
 function saveState(s) {
   try {
@@ -2566,6 +2602,7 @@ function App() {
   const [activeTrack, setActiveTrack] = useState(null);
   const [isReview, setIsReview] = useState(false);
   const [browseTrack, setBrowseTrack] = useState(null);
+  const [showMigrationNotice, setShowMigrationNotice] = useState(!!state.migratedFrom);
   useEffect(() => {
     saveState(state);
   }, [state]);
@@ -2659,7 +2696,7 @@ function App() {
     onSelect: l => openLesson(l, browseTrack),
     onBack: () => setView('home')
   });
-  return /*#__PURE__*/React.createElement(Home, {
+  const homeElement = /*#__PURE__*/React.createElement(Home, {
     state: state,
     onOpenLesson: openLesson,
     onOpenStarred: () => setView('starred'),
@@ -2670,9 +2707,32 @@ function App() {
       setView('browse');
     }
   });
+  if (!showMigrationNotice) return homeElement;
+  return /*#__PURE__*/React.createElement('div', { style: { position: 'relative' } },
+    /*#__PURE__*/React.createElement('div', {
+      style: {
+        position: 'fixed', top: 16, left: 16, right: 16, zIndex: 999,
+        background: 'linear-gradient(135deg,#0F5132,#0a3d26)',
+        border: '1px solid #1DB95455',
+        borderRadius: 14, padding: '14px 16px',
+        boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+        display: 'flex', alignItems: 'flex-start', gap: 10
+      }
+    },
+      /*#__PURE__*/React.createElement('div', { style: { fontSize: 18, flexShrink: 0 } }, '✅'),
+      /*#__PURE__*/React.createElement('div', { style: { flex: 1 } },
+        /*#__PURE__*/React.createElement('div', { style: { color: '#fff', fontSize: 13, fontWeight: 600, marginBottom: 2 } }, 'Your progress was recovered'),
+        /*#__PURE__*/React.createElement('div', { style: { color: 'rgba(255,255,255,0.7)', fontSize: 12 } }, 'Found and restored your previous completions, stars, and reflections.')
+      ),
+      /*#__PURE__*/React.createElement('button', {
+        onClick: () => setShowMigrationNotice(false),
+        style: { background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 8, color: '#fff', padding: '4px 10px', fontSize: 12, fontWeight: 600, flexShrink: 0 }
+      }, 'OK')
+    ),
+    homeElement
+  );
 }
 ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App, null));
 </script>
 </body>
 </html>
-
